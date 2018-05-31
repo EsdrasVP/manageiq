@@ -304,31 +304,39 @@ module EmsRefresh::SaveInventoryInfra
     save_inventory_multi(miq_scsi_target.miq_scsi_luns, hashes, :use_association, [:uid_ems])
   end
 
-  def save_switches_inventory(host, hashes)
-    already_saved, not_yet_saved = hashes.partition { |h| h[:id] }
-    save_inventory_multi(host.switches, not_yet_saved, [], [:uid_ems], :lans)
-    host_switches_hash = already_saved.collect { |switch| {:host_id => host.id, :switch_id => switch[:id]} }
-    save_inventory_multi(host.host_switches, host_switches_hash, [], [:host_id, :switch_id])
-    host.switches(true)
+  def save_switches_inventory(ems, hashes, target = nil)
+    if ems.type.include? "PhysicalInfraManager"
+      target = ems if target.nil?
+  
+      deletes = target == ems ? :use_association : []
+  
+      save_inventory_multi(ems.switches, hashes, deletes, [:uid_ems], %i(asset_detail hardware physical_network_ports))
+    else
+      already_saved, not_yet_saved = hashes.partition { |h| h[:id] }
+      save_inventory_multi(ems.switches, not_yet_saved, [], [:uid_ems], :lans)
+      host_switches_hash = already_saved.collect { |switch| {:host_id => ems.id, :switch_id => switch[:id]} }
+      save_inventory_multi(ems.host_switches, host_switches_hash, [], [:host_id, :switch_id])
+      ems.switches(true)
 
-    host.save!
+      ems.save!
 
-    # Collect the ids of switches and lans after saving
-    hashes.each do |sh|
-      switch = host.switches.detect { |s| s.uid_ems == sh[:uid_ems] }
-      sh[:id] = switch.id
+      # Collect the ids of switches and lans after saving
+      hashes.each do |sh|
+        switch = ems.switches.detect { |s| s.uid_ems == sh[:uid_ems] }
+        sh[:id] = switch.id
 
-      next if sh[:lans].nil?
-      sh[:lans].each do |lh|
-        lan = switch.lans.detect { |l| l.uid_ems == lh[:uid_ems] }
-        lh[:id] = lan.id
+        next if sh[:lans].nil?
+        sh[:lans].each do |lh|
+          lan = switch.lans.detect { |l| l.uid_ems == lh[:uid_ems] }
+          lh[:id] = lan.id
+        end
       end
-    end
 
-    # handle deletes here instead of inside #save_inventory_multi
-    switch_ids = Set.new(hashes.collect { |s| s[:id] })
-    deletes = host.switches.select { |s| !switch_ids.include?(s.id) }
-    host.switches.delete(deletes)
+      # handle deletes here instead of inside #save_inventory_multi
+      switch_ids = Set.new(hashes.collect { |s| s[:id] })
+      deletes = ems.switches.select { |s| !switch_ids.include?(s.id) }
+      ems.switches.delete(deletes)
+    end
   end
 
   def remove_obsolete_switches
